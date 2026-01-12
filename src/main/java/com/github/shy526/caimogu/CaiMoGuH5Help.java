@@ -17,14 +17,18 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Supplier;
 
 @Slf4j
 public class CaiMoGuH5Help {
 
+
+    private final static Map<String, Integer> ReNumMap = new HashMap<>();
 
     public static boolean AcGameComment(String gameId) {
 
@@ -107,10 +111,7 @@ public class CaiMoGuH5Help {
                     pageModel.setNextKey(data.getString("nextKey"));
                     return pageModel;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return getGameCommentPage(gameId, order, type, page);
-
+                    return retry(url,"getGameCommentPage", () -> getGameCommentPage(gameId, order, type, page));
                 }
 
             }
@@ -153,9 +154,8 @@ public class CaiMoGuH5Help {
                 JSONObject result = JSON.parseObject(response.body().string());
                 int code = result.getIntValue("code");
                 if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return acGameCommentReply(msgId, content);
+
+                    return retry(url,"acGameCommentReply", () -> acGameCommentReply(msgId, content));
 
                 }
 
@@ -165,6 +165,26 @@ public class CaiMoGuH5Help {
 
         }
         return -1;
+    }
+
+
+    private static <T> T retry(String url,String key, Supplier<T> supplier) {
+        try {
+            Thread.sleep(1500);
+        } catch (InterruptedException ignored) {
+        }
+        Integer reNum = ReNumMap.getOrDefault(key, 0);
+        reNum++;
+        ReNumMap.put(key, reNum);
+        if (reNum <= 3) {
+            log.error("签名错误 {}=>{} {}", key, reNum,url);
+            T temp = supplier.get();
+            ReNumMap.remove(key);
+            return temp;
+        } else {
+            ReNumMap.remove(key);
+        }
+        return null;
     }
 
 
@@ -207,10 +227,7 @@ public class CaiMoGuH5Help {
                 JSONObject result = JSON.parseObject(response.body().string());
                 int code = result.getIntValue("code");
                 if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return acGameScore(gameId, content, score, process);
-
+                    return retry(url,"acGameScore", () -> acGameScore(gameId, content, score, process));
                 }
                 return code;
 
@@ -226,7 +243,7 @@ public class CaiMoGuH5Help {
         List<String> circleIds = Arrays.asList("449", "329", "369", "383", "282", "466");
         LocalDateTime now = LocalDateTime.now();
         int acCommentNum = 0;
-        int acCommentMax = 3;
+        int acCommentMax = Config.INSTANCE.userInfo.getMaxComment();
         for (String circleId : circleIds) {
 
             int page = 1;
@@ -321,9 +338,7 @@ public class CaiMoGuH5Help {
                     pageModel.setNextKey(data.getString("nextKey"));
                     return pageModel;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return getCommentPage(detailId, order, page);
+                    return retry(url,"getCommentPage", () -> getCommentPage(detailId, order, page));
 
                 }
 
@@ -364,9 +379,7 @@ public class CaiMoGuH5Help {
                     pageModel.setData(data.getList("list", JSONObject.class));
                     return pageModel;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return getGamePage(sort, page);
+                    return retry(url,"getGamePage", () -> getGamePage(sort, page));
 
                 }
 
@@ -405,9 +418,7 @@ public class CaiMoGuH5Help {
                 if (code == 0) {
                     return result.getList("data", JSONObject.class);
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return getDetailPage(id, type, page);
+                    return retry(url,"getDetailPage", () -> getDetailPage(id, type, page));
 
                 }
 
@@ -423,9 +434,10 @@ public class CaiMoGuH5Help {
      *
      * @return type=1 帖子Id type=2 游戏Id 3 评论过游戏库中的评论
      */
-    public static Map<String, Set<String>> getReplyGroup() {
+    public static Map<String, Set<String>> getReplyGroup(LocalDate now) {
         String nextKey = "";
         Map<String, Set<String>> group = new HashMap<>();
+        Set<String> df = new HashSet<>();
         do {
             PageModel pageModel = getReplyList(nextKey);
             if (pageModel.getData().isEmpty()) {
@@ -435,6 +447,20 @@ public class CaiMoGuH5Help {
             for (JSONObject item : data) {
                 String type = item.getString("type");
                 String parentId = item.getString("parentId");
+                LocalDate createTime = item.getLocalDateTime("createTime").toLocalDate();
+                if (now != null && !now.equals(createTime)) {
+                    return group;
+                }
+
+                if (now != null) {
+                    Set<String> post = group.getOrDefault("1", df);
+                    Set<String> game = group.getOrDefault("2", df);
+                    Set<String> gamePost = group.getOrDefault("3", df);
+                    if (post.size() >= 3 && game.size() >= 3 && !gamePost.isEmpty()) {
+                        return group;
+                    }
+                }
+
                 if (!"0".equals(parentId)) {
                     type = "3";
                 }
@@ -497,9 +523,7 @@ public class CaiMoGuH5Help {
                     JSONObject data = result.getJSONObject("data");
                     return true;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return acComment(pId, content);
+                    return retry(url,"acComment", () -> acComment(pId, content));
 
                 }
             }
@@ -540,9 +564,7 @@ public class CaiMoGuH5Help {
                     pageModel.setNextKey(data.getString("nextKey"));
                     return pageModel;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return getReplyList(nextKey);
+                    return retry(url,"getReplyList", () -> getReplyList(nextKey));
 
                 }
             }
@@ -582,9 +604,7 @@ public class CaiMoGuH5Help {
                     Config.INSTANCE.userInfo.setPoint(point);
                     return point;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    log.error("{}=>{}", url, result);
-                    return getPoint();
+                    return retry(url,"getPoint", () -> getPoint());
 
                 }
 
@@ -641,9 +661,11 @@ public class CaiMoGuH5Help {
                     userInfo.setNickname(data.getString("nickname"));
                     Config.INSTANCE.userInfo = userInfo;
                 } else if (code == 10002) {
-                    Thread.sleep(1000);
-                    loginH5(username, password);
-                    log.error("{}=>{}", url, result.toString());
+                    retry(url,"loginH5", () -> {
+                        loginH5(username, password);
+                        return 1;
+                    });
+
                 }
             } else {
                 log.error("登录失败");

@@ -11,6 +11,7 @@ import lombok.extern.java.Log;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -65,18 +66,21 @@ public class App {
         String runFileName = "run.txt";
         String gameCommentFileName = "gameComment.txt";
 
-        //检查运行文件
-        Set<String> run = CaiMoGuHelp.readResources(runFileName);
         LocalDate current = LocalDate.now();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        Iterator<String> iterator = run.iterator();
-        String dateStr = iterator.hasNext() ? iterator.next() : null;
-        if (dateStr != null) {
-            LocalDate date = LocalDate.parse(dateStr, formatter);
-            if (current.isEqual(date) || current.isBefore(date)) {
-                log.error("今日任务已经执行,若要重复执行请删run.txt");
-                return;
-            }
+        Set<String> df = new HashSet<>();
+        //type=1 帖子Id type=2 游戏Id 3 评论过游戏库中的评论
+        Map<String, Set<String>> nowReplyGroup = CaiMoGuH5Help.getReplyGroup(current);
+        userInfo.setMaxGame(userInfo.getMaxGame() - nowReplyGroup.getOrDefault("2", df).size());
+        userInfo.setMaxGameComment(userInfo.getMaxGameComment() - nowReplyGroup.getOrDefault("3", df).size());
+        userInfo.setMaxComment(userInfo.getMaxComment() - nowReplyGroup.getOrDefault("2", df).size());
+        log.error("{} 影响力获取渠道 剩余数量 帖子子回复数:{} 游戏评论回复:{} 游戏库评论:{}", current.format(formatter), userInfo.getMaxComment(), userInfo.getMaxGameComment(), userInfo.getMaxGame());
+
+        CaiMoGuH5Help.scanGameIds();
+
+        if (userInfo.getMaxComment() <= 0 && userInfo.getMaxGame() <= 0 && userInfo.getMaxGameComment() <= 0) {
+            log.error("{} 无可用渠道获取影响力", current.format(formatter));
+            return;
         }
 
         //检查游戏库Id是否存在
@@ -118,7 +122,7 @@ public class App {
                     log.error("无法正常评论游戏");
                     break;
                 }
-                if (trueFlag>=3){
+                if (trueFlag >= userInfo.getMaxGame()) {
                     break;
                 }
             }
@@ -131,18 +135,22 @@ public class App {
         Set<String> postIds = checkAcFileName(postIdsFileName, replyGroup, "1");
         int acPostNum = CaiMoGuH5Help.getRuleDetail(postIds);
         GithubHelp.createOrUpdateFile(String.join("\n", postIds), postIdsFileName, ownerRepo, githubApiToken);
-        log.error("成功评论帖子数量:{}", acPostNum);
+        log.error("成功评论帖子:{}", acPostNum);
 
 
         Set<String> gameCommentIds = checkAcFileName(gameCommentFileName, replyGroup, "3");
+
+        int gameCommentNum = 0;
         for (String gameId : gameIds) {
             if (gameCommentIds.contains(gameId)) {
                 continue;
             }
             gameCommentIds.add(gameId);
             int i = CaiMoGuH5Help.acGameCommentReply(gameId, "说的全对,确实很好玩");
-            if (i==0){
-                log.error("成功恢复游戏库评论:{}", gameId);
+            if (i == 0) {
+                gameCommentNum++;
+            }
+            if (gameCommentNum >= userInfo.getMaxGameComment()) {
                 break;
             }
         }
@@ -160,13 +168,13 @@ public class App {
         Set<String> checkIds = CaiMoGuHelp.readResources(fileName);
         if (checkIds.isEmpty()) {
             if (replyGroup.isEmpty()) {
-                replyGroup = CaiMoGuH5Help.getReplyGroup();
+                replyGroup = CaiMoGuH5Help.getReplyGroup(null);
             }
             checkIds = replyGroup.get(type);
-            if (checkIds==null||checkIds.isEmpty()) {
+            if (checkIds == null || checkIds.isEmpty()) {
                 return new HashSet<>();
             }
-            log.error("{}数据同步",fileName);
+            log.error("{}数据同步", fileName);
             GithubHelp.createOrUpdateFile(String.join("\n", checkIds), fileName, githubInfo.getOwnerRepo(), githubInfo.getGithubApiToken());
         }
         return checkIds;
